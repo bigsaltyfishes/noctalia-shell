@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <array>
-#include <linux/input-event-codes.h>
+#include "core/input/input_event_codes.h"
 #include <wayland-client-protocol.h>
 
 namespace noctalia::bar {

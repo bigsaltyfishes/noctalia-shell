@@ -32,7 +32,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
-#include <linux/input-event-codes.h>
+#include "core/input/input_event_codes.h"
 #include <optional>
 #include <ranges>
 #include <unordered_set>

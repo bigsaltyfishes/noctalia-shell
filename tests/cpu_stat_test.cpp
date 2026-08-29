@@ -13,6 +13,7 @@
 #include <string_view>
 #include <vector>
 
+
 namespace {
 
   namespace cpu_stat = noctalia::system::cpu_stat;

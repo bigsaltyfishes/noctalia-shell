@@ -1,5 +1,7 @@
 #include "shell/desktop/widgets/desktop_clock_widget.h"
 
+#include "time/tz_compat.h"
+
 #include "render/core/color.h"
 #include "render/core/renderer.h"
 #include "render/scene/node.h"
@@ -93,17 +95,12 @@ namespace {
       };
     }
 
-    const time_zone* tz = nullptr;
-    try {
-      tz = locate_zone(tzName);
-    } catch (...) {
-    }
-
-    if (tz == nullptr) {
+    const auto reading = noctalia::tz::toLocal(tzName, now);
+    if (!reading.ok) {
       return currentLocalTimeParts("");
     }
 
-    const auto local = tz->to_local(now);
+    const auto& local = reading.local;
     const auto localDays = floor<days>(local);
     hh_mm_ss time{floor<seconds>(local - localDays)};
     return {

@@ -21,7 +21,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
-#include <linux/input-event-codes.h>
+#include "core/input/input_event_codes.h"
 #include <optional>
 #include <sstream>
 #include <vector>

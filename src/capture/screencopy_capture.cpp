@@ -5,6 +5,7 @@
 #include "wlr-screencopy-unstable-v1-client-protocol.h"
 
 #include <cstring>
+#include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <vector>
@@ -52,8 +53,12 @@ namespace {
   }
 
   [[nodiscard]] int createAnonymousFile(std::size_t size) {
-#ifdef __linux__
+#if defined(__linux__)
     const int fd = memfd_create("noctalia-screencopy", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+#elif defined(__FreeBSD__)
+    // SHM_ANON creates an anonymous shared-memory object without a name; it is
+    // the FreeBSD equivalent of a Linux memfd for Wayland shm pools.
+    const int fd = ::shm_open(SHM_ANON, O_RDWR | O_CLOEXEC, 0600);
 #else
     const int fd = -1;
 #endif

@@ -357,7 +357,7 @@ namespace settings {
       rankOf[i] = it->second;
     }
     std::vector<std::size_t> order(count);
-    std::ranges::iota(order, std::size_t{0});
+    std::iota(order.begin(), order.end(), std::size_t{0});
     std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) { return rankOf[a] < rankOf[b]; });
     return order;
   }

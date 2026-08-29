@@ -1,5 +1,8 @@
 #include "core/process/process.h"
 
+// Declared by glibc's <unistd.h>; other platforms (e.g. FreeBSD) may hide it.
+extern "C" char** environ;
+
 #include "core/log.h"
 #include "util/string_utils.h"
 

@@ -33,7 +33,7 @@
 #include <chrono>
 #include <cmath>
 #include <functional>
-#include <linux/input-event-codes.h>
+#include "core/input/input_event_codes.h"
 #include <memory>
 #include <optional>
 #include <unordered_map>

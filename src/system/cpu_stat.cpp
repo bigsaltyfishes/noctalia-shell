@@ -6,6 +6,11 @@
 #include <fstream>
 #include <sstream>
 
+#if defined(__FreeBSD__)
+#include <sys/param.h>
+#include <sys/sysctl.h>
+#endif
+
 namespace noctalia::system::cpu_stat {
 
   namespace {
@@ -60,7 +65,30 @@ namespace noctalia::system::cpu_stat {
     return std::clamp(100.0 * busy, 0.0, 100.0);
   }
 
+#if defined(__FreeBSD__)
+  namespace {
+    // FreeBSD CPUSTATES layout: CP_USER, CP_NICE, CP_SYS, CP_INTR, CP_IDLE.
+    constexpr int kCpuStates = 5;
+    constexpr int kIdleSlot = 4;
+
+    [[nodiscard]] std::optional<Totals> totalsFromTimes(const long* times) {
+      Totals totals{};
+      for (int i = 0; i < kCpuStates; ++i) {
+        if (times[i] < 0) {
+          return std::nullopt;
+        }
+        totals.total += static_cast<std::uint64_t>(times[i]);
+      }
+      if (times[kIdleSlot] >= 0) {
+        totals.idle = static_cast<std::uint64_t>(times[kIdleSlot]);
+      }
+      return totals;
+    }
+  } // namespace
+#endif
+
   std::optional<Totals> readTotals(const std::filesystem::path& statPath) {
+#if defined(__linux__)
     std::ifstream file{statPath};
     if (!file.is_open()) {
       return std::nullopt;
@@ -72,9 +100,19 @@ namespace noctalia::system::cpu_stat {
     }
 
     return parseLine(line, "cpu");
+#else
+    (void)statPath;
+    long times[kCpuStates] = {};
+    std::size_t length = sizeof(times);
+    if (::sysctlbyname("kern.cp_time", times, &length, nullptr, 0) != 0 || length < sizeof(times)) {
+      return std::nullopt;
+    }
+    return totalsFromTimes(times);
+#endif
   }
 
   std::optional<std::vector<Totals>> readCoreTotals(const std::filesystem::path& statPath) {
+#if defined(__linux__)
     std::ifstream file{statPath};
     if (!file.is_open()) {
       return std::nullopt;
@@ -105,6 +143,37 @@ namespace noctalia::system::cpu_stat {
       return std::nullopt;
     }
     return cores;
+#else
+    (void)statPath;
+    int coreCount = 0;
+    std::size_t length = sizeof(coreCount);
+    if (::sysctlbyname("kern.smp.cpus", &coreCount, &length, nullptr, 0) != 0 || coreCount <= 0) {
+      return std::nullopt;
+    }
+
+    std::vector<long> times(static_cast<std::size_t>(coreCount) * kCpuStates, -1L);
+    length = times.size() * sizeof(long);
+    if (::sysctlbyname("kern.cp_times", times.data(), &length, nullptr, 0) != 0) {
+      return std::nullopt;
+    }
+
+    const auto reported = length / sizeof(long);
+    const auto usableCores = static_cast<std::size_t>(reported / kCpuStates);
+    if (usableCores == 0) {
+      return std::nullopt;
+    }
+
+    std::vector<Totals> cores;
+    cores.reserve(usableCores);
+    for (std::size_t core = 0; core < usableCores; ++core) {
+      auto totals = totalsFromTimes(times.data() + core * kCpuStates);
+      if (!totals.has_value()) {
+        return std::nullopt;
+      }
+      cores.push_back(*totals);
+    }
+    return cores;
+#endif
   }
 
 } // namespace noctalia::system::cpu_stat

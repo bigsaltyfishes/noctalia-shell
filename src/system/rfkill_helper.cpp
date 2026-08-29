@@ -8,12 +8,33 @@
 #include <cstring>
 #include <dirent.h>
 #include <fcntl.h>
+#if defined(__linux__)
 #include <linux/rfkill.h>
+#endif
 #include <optional>
 #include <string>
 #include <unistd.h>
 #include <vector>
 
+#if !defined(__linux__)
+
+RfkillSwitchResult setRfkillSoftBlocked(RfkillDeviceType /*type*/, bool /*softBlocked*/) {
+  return {.success = false, .hardBlocked = false, .detail = "rfkill is only available on Linux"};
+}
+
+RfkillSwitchResult setRfkillSoftBlockedForNetInterface(std::string_view /*ifname*/, bool /*softBlocked*/) {
+  return {.success = false, .hardBlocked = false, .detail = "rfkill is only available on Linux"};
+}
+
+bool isRfkillSoftBlocked(RfkillDeviceType /*type*/) {
+  return false;
+}
+
+bool isRfkillHardBlocked(RfkillDeviceType /*type*/) {
+  return false;
+}
+
+#else
 namespace {
 
   constexpr Logger kLog("rfkill");
@@ -260,3 +281,5 @@ RfkillSwitchResult setRfkillSoftBlockedForNetInterface(std::string_view ifname, 
 bool isRfkillSoftBlocked(RfkillDeviceType type) { return std::ranges::any_of(findEntries(type), &RfkillEntry::soft); }
 
 bool isRfkillHardBlocked(RfkillDeviceType type) { return std::ranges::any_of(findEntries(type), &RfkillEntry::hard); }
+
+#endif

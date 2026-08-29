@@ -21,7 +21,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
-#include <linux/input-event-codes.h>
+#include "core/input/input_event_codes.h"
 #include <optional>
 #include <utility>
 #include <wayland-client-protocol.h>

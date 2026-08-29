@@ -35,7 +35,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <linux/input-event-codes.h>
+#include "core/input/input_event_codes.h"
 #include <numbers>
 #include <optional>
 #include <string>

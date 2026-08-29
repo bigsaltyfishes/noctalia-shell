@@ -3,7 +3,7 @@
 #include "render/scene/input_area.h"
 #include "ui/controls/input.h"
 
-#include <linux/input-event-codes.h>
+#include "core/input/input_event_codes.h"
 #include <optional>
 #include <print>
 #include <string>

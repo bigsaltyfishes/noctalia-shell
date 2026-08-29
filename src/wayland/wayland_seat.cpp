@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <clocale>
 #include <cstring>
-#include <linux/input-event-codes.h>
+#include "core/input/input_event_codes.h"
 #include <sys/mman.h>
 #include <unistd.h>
 #include <xkbcommon/xkbcommon-compose.h>

@@ -6,7 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include <linux/input-event-codes.h>
+#include "core/input/input_event_codes.h"
 #include <memory>
 
 // Internal canvas that reports a virtual size set externally and never moves

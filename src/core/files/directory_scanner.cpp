@@ -94,7 +94,7 @@ std::vector<FileEntry> DirectoryScanner::scan(
   }
 
   std::vector<std::size_t> indices(entries.size());
-  std::ranges::iota(indices, std::size_t{0});
+  std::iota(indices.begin(), indices.end(), std::size_t{0});
 
   const bool ascending = sortOrder == FileDialogSortOrder::Ascending;
   std::ranges::sort(indices, [&](std::size_t ai, std::size_t bi) {

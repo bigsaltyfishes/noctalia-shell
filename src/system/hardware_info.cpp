@@ -14,11 +14,38 @@
 #include <mutex>
 #include <string>
 #include <sys/statvfs.h>
+#if defined(__FreeBSD__)
+#include <sys/param.h>
+#include <sys/sysctl.h>
+#endif
 #include <vector>
 
 namespace {
 
+#if defined(__FreeBSD__)
+  template <std::size_t N>
+  std::string sysctlString(const char* (&mibNames)[N]) {
+    for (const char* name : mibNames) {
+      char buffer[256];
+      std::size_t length = sizeof(buffer);
+      if (::sysctlbyname(name, buffer, &length, nullptr, 0) == 0 && length > 0) {
+        buffer[length < sizeof(buffer) ? length : sizeof(buffer) - 1] = '\0';
+        return std::string{buffer};
+      }
+    }
+    return {};
+  }
+#endif
+
   std::string readCpuModel() {
+#if defined(__FreeBSD__)
+    const char* candidates[] = {"hw.model"};
+    std::string model = sysctlString(candidates);
+    if (!model.empty()) {
+      return model;
+    }
+    return i18n::tr("system.hardware.unknown-cpu");
+#else
     std::ifstream file{"/proc/cpuinfo"};
     if (!file.is_open()) {
       return i18n::tr("system.hardware.unknown-cpu");
@@ -34,6 +61,7 @@ namespace {
       }
     }
     return i18n::tr("system.hardware.unknown-cpu");
+#endif
   }
 
   std::string shortVendorPrefix(const std::string& vendorName) {
@@ -311,6 +339,20 @@ namespace {
   std::string readDmiField(const char* path) { return readSysfsLine(path); }
 
   std::string detectMotherboard() {
+#if defined(__FreeBSD__)
+    // SMBIOS data is exposed via hw.smbios.* sysctls; note the kernel's
+    // historic "planer" spelling for the board name.
+    const char* boardNames[] = {"hw.smbios.planer", "hw.smbios.board"};
+    std::string boardName = sysctlString(boardNames);
+    if (boardName.empty()) {
+      const char* productNames[] = {"hw.smbios.product"};
+      boardName = sysctlString(productNames);
+    }
+    if (!boardName.empty()) {
+      return boardName;
+    }
+    return i18n::tr("system.hardware.unknown");
+#else
     const std::string boardName = readDmiField("/sys/class/dmi/id/board_name");
     const std::string boardVersion = readDmiField("/sys/class/dmi/id/board_version");
     const std::string productName = readDmiField("/sys/class/dmi/id/product_name");
@@ -325,9 +367,18 @@ namespace {
       return productName;
     }
     return i18n::tr("system.hardware.unknown");
+#endif
   }
 
   std::string detectMemoryTotal() {
+#if defined(__FreeBSD__)
+    std::uint64_t physMem = 0;
+    std::size_t length = sizeof(physMem);
+    if (::sysctlbyname("hw.physmem", &physMem, &length, nullptr, 0) != 0 || physMem == 0) {
+      return i18n::tr("system.hardware.unknown");
+    }
+    return FormatUnits::formatBinaryBytesAsGib(physMem);
+#else
     std::ifstream file{"/proc/meminfo"};
     if (!file.is_open()) {
       return i18n::tr("system.hardware.unknown");
@@ -352,6 +403,7 @@ namespace {
       return FormatUnits::formatBinaryBytesAsGib(totalKb * 1024ULL);
     }
     return i18n::tr("system.hardware.unknown");
+#endif
   }
 
   std::string detectCompositor() {

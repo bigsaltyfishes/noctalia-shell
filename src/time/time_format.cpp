@@ -1,5 +1,7 @@
 #include "time/time_format.h"
 
+#include "time/tz_compat.h"
+
 #include "i18n/i18n.h"
 
 #include <algorithm>
@@ -204,24 +206,15 @@ std::string formatLocalTime(const char* fmt) {
     return *compat;
   }
 
-  const auto local = current_zone()->to_local(now);
+  const auto reading = noctalia::tz::toLocal("", now);
   try {
-    return std::vformat(std::locale(""), normalizedFmt, std::make_format_args(local));
+    return std::vformat(std::locale(""), normalizedFmt, std::make_format_args(reading.local));
   } catch (...) {
     return normalizedFmt;
   }
 }
 
-bool isValidTimezone(std::string_view tzName) {
-  if (tzName.empty()) {
-    return true;
-  }
-  try {
-    return std::chrono::locate_zone(tzName) != nullptr;
-  } catch (...) {
-    return false;
-  }
-}
+bool isValidTimezone(std::string_view tzName) { return tzName.empty() || noctalia::tz::zoneExists(tzName); }
 
 std::string formatTimezoneUnixTime(std::int64_t unixSeconds, std::string_view fmt, std::string_view tzName) {
   if (tzName.empty()) {
@@ -229,21 +222,13 @@ std::string formatTimezoneUnixTime(std::int64_t unixSeconds, std::string_view fm
   }
 
   using namespace std::chrono;
-  const time_zone* tz = nullptr;
-  try {
-    tz = locate_zone(tzName);
-  } catch (...) {
-    return formatLocalUnixTime(unixSeconds, fmt);
-  }
-
-  if (tz == nullptr) {
-    return formatLocalUnixTime(unixSeconds, fmt);
-  }
-
   const std::string normalizedFmt = normalizeFormatEscapes(fmt);
   const auto tp = sys_seconds{seconds{unixSeconds}};
-  const auto local = tz->to_local(tp);
-  const auto zoneInfo = tz->get_info(tp);
+  const auto zoneReading = noctalia::tz::toLocal(tzName, tp);
+  if (!zoneReading.ok) {
+    return formatLocalUnixTime(unixSeconds, fmt);
+  }
+  const auto& local = zoneReading.local;
 
   std::tm tm{};
   const auto localDays = floor<days>(local);
@@ -257,10 +242,11 @@ std::string formatTimezoneUnixTime(std::int64_t unixSeconds, std::string_view fm
   tm.tm_sec = static_cast<int>(time.seconds().count());
   tm.tm_wday = weekday(localDays).c_encoding();
   tm.tm_yday = static_cast<int>((localDays - local_days{ymd.year() / January / 1}).count());
-  tm.tm_isdst = zoneInfo.save != minutes::zero();
+  tm.tm_isdst = zoneReading.save != std::chrono::minutes::zero() ? 1 : 0;
 #if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
-  tm.tm_gmtoff = static_cast<long>(zoneInfo.offset.count());
-  tm.tm_zone = zoneInfo.abbrev.c_str();
+  tm.tm_gmtoff = static_cast<long>(zoneReading.offset.count());
+  // BSD std::tm has no const-qualified tm_zone.
+  tm.tm_zone = const_cast<char*>(zoneReading.abbrev.c_str());
 #endif
 
   if (auto compat = formatStrftimeCompat(normalizedFmt, tm, unixSeconds)) {
@@ -292,9 +278,9 @@ std::string formatLocalUnixTime(std::int64_t unixSeconds, std::string_view fmt) 
     return *compat;
   }
 
-  const auto local = current_zone()->to_local(tp);
+  const auto reading = noctalia::tz::toLocal("", tp);
   try {
-    return std::vformat(std::locale(""), normalizedFmt, std::make_format_args(local));
+    return std::vformat(std::locale(""), normalizedFmt, std::make_format_args(reading.local));
   } catch (...) {
     return normalizedFmt;
   }

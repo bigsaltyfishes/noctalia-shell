@@ -5,6 +5,7 @@
 #include <cctype>
 #include <charconv>
 #include <cmath>
+#include <cstdlib>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -66,6 +67,20 @@ namespace StringUtils {
     }
 
     T value{};
+#if defined(_LIBCPP_VERSION)
+    // libc++ does not provide floating-point std::from_chars yet. strtod is
+    // locale-dependent, but the input here is already normalized to a dot
+    // decimal by the callers.
+    static thread_local std::string storage;
+    storage.assign(trimmed);
+    const char* begin = storage.c_str();
+    char* parsedEnd = nullptr;
+    value = static_cast<T>(std::strtod(begin, &parsedEnd));
+    if (parsedEnd != begin + trimmed.size() || !std::isfinite(value)) {
+      return std::nullopt;
+    }
+    return value;
+#else
     const char* begin = trimmed.data();
     const char* end = begin + trimmed.size();
     const auto [ptr, ec] = std::from_chars(begin, end, value, std::chars_format::general);
@@ -73,6 +88,7 @@ namespace StringUtils {
       return std::nullopt;
     }
     return value;
+#endif
   }
 
   [[nodiscard]] inline std::string formatDotDecimal(double value) {

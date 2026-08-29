@@ -3,13 +3,15 @@
 set -eu
 
 noctalia_bin=$1
+tests_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+data_dir="$tests_dir/config_validate"
 
 fail() {
   printf '%s\n' "config_validate_cli_test: FAIL: $*" >&2
   exit 1
 }
 
-if valid_output=$("$noctalia_bin" config validate tests/config_validate/generated-config 2>&1); then
+if valid_output=$("$noctalia_bin" config validate "$data_dir"/generated-config 2>&1); then
   :
 else
   status=$?
@@ -23,23 +25,23 @@ case "$valid_output" in
   *"WARN"*) fail "generated single-file config reported a warning" ;;
 esac
 
-warn_output=$("$noctalia_bin" config validate tests/config_validate/warn-only.toml 2>&1) \
+warn_output=$("$noctalia_bin" config validate "$data_dir"/warn-only.toml 2>&1) \
   || fail "warning-only config should validate"
 # Every diagnostic is prefixed with the file:line:column it came from.
 case "$warn_output" in
-  *"WARN  tests/config_validate/warn-only.toml:3:10: accessibility.ui_scl: unknown setting"*) ;;
+  *"WARN  "$data_dir"/warn-only.toml:3:10: accessibility.ui_scl: unknown setting"*) ;;
   *) fail "warning-only config did not report the unknown setting with its origin" ;;
 esac
 case "$warn_output" in
-  *"WARN  tests/config_validate/warn-only.toml:8:1: shell.launcher.providers.applications: custom settings are not allowed"*) ;;
+  *"WARN  "$data_dir"/warn-only.toml:8:1: shell.launcher.providers.applications: custom settings are not allowed"*) ;;
   *) fail "warning-only config did not report the disallowed applications provider setting" ;;
 esac
 case "$warn_output" in
-  *"WARN  tests/config_validate/warn-only.toml:6:19: shell.launcher.provider_prefix: is empty"*) ;;
+  *"WARN  "$data_dir"/warn-only.toml:6:19: shell.launcher.provider_prefix: is empty"*) ;;
   *) fail "warning-only config did not report the empty provider_prefix" ;;
 esac
 case "$warn_output" in
-  *"WARN  tests/config_validate/warn-only.toml:11:1: shell.launcher.providers.nonexistent: provider is nonexistent"*) ;;
+  *"WARN  "$data_dir"/warn-only.toml:11:1: shell.launcher.providers.nonexistent: provider is nonexistent"*) ;;
   *) fail "warning-only config did not report the nonexistent provider setting" ;;
 esac
 case "$warn_output" in
@@ -51,18 +53,22 @@ case "$warn_output" in
   *) fail "warning-only config did not report the duplicate provider prefix" ;;
 esac
 
-syntax_output=$("$noctalia_bin" config validate tests/config_validate/syntax-error.toml 2>&1) \
+syntax_output=$("$noctalia_bin" config validate "$data_dir"/syntax-error.toml 2>&1) \
   && fail "syntax-error config should fail"
 case "$syntax_output" in
-  *"ERROR tests/config_validate/syntax-error.toml:2:25: syntax: "*) ;;
+  *"ERROR "$data_dir"/syntax-error.toml:2:25: syntax: "*) ;;
   *) fail "syntax-error config did not report the source position" ;;
 esac
 
-timezone_output=$("$noctalia_bin" config validate tests/config_validate/invalid-timezone.toml 2>&1) \
+timezone_output=$("$noctalia_bin" config validate "$data_dir"/invalid-timezone.toml 2>&1) \
   && fail "invalid timezone config should fail"
 case "$timezone_output" in
-  *'ERROR tests/config_validate/invalid-timezone.toml:3:12: widget.world-clock.timezone: unknown timezone "Europe/Berln"'*) ;;
+  *"ERROR $data_dir/invalid-timezone.toml:3:12: widget.world-clock.timezone: unknown timezone"*) ;;
   *) fail "invalid timezone config did not report the widget setting path" ;;
+esac
+case "$timezone_output" in
+  *'"Europe/Berln"'*) ;;
+  *) fail "invalid timezone config did not report the unknown timezone name" ;;
 esac
 
 # The exporter and the validator must agree on every section: whatever `config export

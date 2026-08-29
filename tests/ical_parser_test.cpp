@@ -1,5 +1,7 @@
 #include "calendar/ical_parser.h"
 
+#include "time/tz_compat.h"
+
 #include <algorithm>
 #include <chrono>
 #include <print>
@@ -34,23 +36,22 @@ namespace {
   // occurrences. current_zone() reads /etc/localtime and ignores TZ, so all-day expectations must be
   // computed from it rather than hardcoded to a single zone.
   system_clock::time_point localMidnight(int y, int mo, int d) {
-    const local_days ld{year{y} / month{static_cast<unsigned>(mo)} / day{static_cast<unsigned>(d)}};
-    try {
-      return time_point_cast<system_clock::duration>(time_point_cast<seconds>(current_zone()->to_sys(ld)));
-    } catch (...) {
-      return sys_days{year{y} / month{static_cast<unsigned>(mo)} / day{static_cast<unsigned>(d)}};
+    if (const auto sys = noctalia::tz::toSys("", y, mo, d, 0, 0, 0)) {
+      return time_point_cast<system_clock::duration>(*sys);
     }
+    return time_point_cast<system_clock::duration>(
+        std::chrono::sys_days{std::chrono::year{y} / std::chrono::month{static_cast<unsigned>(mo)}
+                              / std::chrono::day{static_cast<unsigned>(d)}}
+    );
   }
 
   system_clock::time_point localTime(int y, int mo, int d, int h, int mi = 0) {
-    const local_seconds lt =
-        local_days{year{y} / month{static_cast<unsigned>(mo)} / day{static_cast<unsigned>(d)}} + hours{h} + minutes{mi};
-    try {
-      return time_point_cast<system_clock::duration>(time_point_cast<seconds>(current_zone()->to_sys(lt)));
-    } catch (...) {
-      const sys_days civilDay{year{y} / month{static_cast<unsigned>(mo)} / day{static_cast<unsigned>(d)}};
-      return civilDay + hours{h} + minutes{mi};
+    if (const auto sys = noctalia::tz::toSys("", y, mo, d, h, mi, 0)) {
+      return time_point_cast<system_clock::duration>(*sys);
     }
+    const std::chrono::sys_days civilDay{std::chrono::year{y} / std::chrono::month{static_cast<unsigned>(mo)}
+                                         / std::chrono::day{static_cast<unsigned>(d)}};
+    return civilDay + std::chrono::hours{h} + std::chrono::minutes{mi};
   }
 
   // Assert the parsed occurrences' start instants exactly match `expected` (order-independent).

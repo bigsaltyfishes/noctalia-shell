@@ -11,7 +11,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <linux/input-event-codes.h>
+#include "core/input/input_event_codes.h"
 #include <memory>
 #include <utility>
 #include <wayland-client-protocol.h>

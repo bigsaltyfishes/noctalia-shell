@@ -8,7 +8,7 @@
 #include "ui/style.h"
 
 #include <algorithm>
-#include <linux/input-event-codes.h>
+#include "core/input/input_event_codes.h"
 #include <memory>
 #include <wayland-client-protocol.h>
 

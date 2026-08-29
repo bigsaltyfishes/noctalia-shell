@@ -1,6 +1,8 @@
 #include "i18n/i18n_service.h"
 #include "time/time_format.h"
 
+#include "time/tz_compat.h"
+
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -19,12 +21,12 @@ namespace {
     return true;
   }
 
-  std::string expectedZoneLabel(const std::chrono::sys_seconds& now, const std::chrono::time_zone& zone) {
-    const auto info = zone.get_info(now);
-    const auto totalMinutes = std::chrono::duration_cast<std::chrono::minutes>(info.offset).count();
+  std::string expectedZoneLabel(const std::chrono::sys_seconds& now, std::string_view zoneName) {
+    const auto reading = noctalia::tz::toLocal(zoneName, now);
+    const auto totalMinutes = std::chrono::duration_cast<std::chrono::minutes>(reading.offset).count();
     const auto hours = totalMinutes / 60;
     const auto minutes = std::abs(totalMinutes % 60);
-    return std::format("{:+03}{:02}|{}", hours, minutes, info.abbrev);
+    return std::format("{:+03}{:02}|{}", hours, minutes, reading.abbrev);
   }
 
   std::string utcDayOfYear(const std::chrono::sys_seconds& now) {
@@ -56,9 +58,9 @@ int main() {
        )
       && ok;
   const auto beforeTimezoneFormat = floor<seconds>(system_clock::now());
-  const auto* kiritimati = locate_zone("Pacific/Kiritimati");
   ok = expectEqual(
-           formatTimezoneTime("%z|%Z", kiritimati->name()), expectedZoneLabel(beforeTimezoneFormat, *kiritimati),
+           formatTimezoneTime("%z|%Z", "Pacific/Kiritimati"),
+           expectedZoneLabel(beforeTimezoneFormat, "Pacific/Kiritimati"),
            "formats configured timezone offset and abbreviation"
        )
       && ok;

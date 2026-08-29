@@ -19,7 +19,7 @@ sudo pacman -S meson gcc just \
   pam curl libwebp libjxl libsndfile librsvg \
   libqalculate libxml2 \
   md4c tomlplusplus libical \
-  nlohmann-json stb \
+  nlohmann-json \
   jemalloc
 ```
 
@@ -37,7 +37,7 @@ sudo dnf install meson gcc-c++ just \
   pam-devel polkit-devel libcurl-devel libwebp-devel libjxl-devel libsndfile-devel librsvg2-devel \
   libqalculate-devel libxml2-devel \
   md4c-devel tomlplusplus-devel libical-devel \
-  json-devel stb_image_resize2-devel stb_image_write-devel \
+  json-devel \
   jemalloc-devel
 ```
 
@@ -55,7 +55,7 @@ sudo zypper install meson gcc-c++ just \
   pam-devel polkit-devel libcurl-devel libwebp-devel libjxl-devel libsndfile-devel librsvg-devel \
   libqalculate-devel libxml2-devel \
   md4c-devel tomlplusplus-devel libical-devel \
-  nlohmann_json-devel stb-devel \
+  nlohmann_json-devel \
   jemalloc-devel
 ```
 
@@ -74,7 +74,7 @@ sudo apt install meson g++ just \
   libcurl4-openssl-dev libwebp-dev libjxl-dev libsndfile1-dev librsvg2-dev \
   libqalculate-dev libxml2-dev \
   libmd4c-dev libtomlplusplus-dev libical-dev \
-  nlohmann-json3-dev libstb-dev \
+  nlohmann-json3-dev \
   libjemalloc-dev
 ```
 
@@ -90,7 +90,7 @@ sudo xbps-install meson ninja pkg-config git \
   libcurl-devel pam-devel libwebp-devel libjxl-devel libsndfile-devel \
   basu-devel sdbus-c++-devel \
   libmd4c-devel tomlplusplus-devel libical-devel \
-  json-c++ stb \
+  json-c++ \
   polkit-devel librsvg-devel libqalculate-devel libxml2-devel jemalloc-devel
 ```
 
@@ -107,9 +107,34 @@ sudo moss install meson gcc clang just \
   linux-pam-devel curl libwebp-devel libjxl-devel libsndfile-devel librsvg-devel \
   libqalculate-devel libxml2-devel \
   md4c-devel tomlplusplus-devel libical-devel \
-  nlohmann-json stb \
+  nlohmann-json \
   jemalloc-devel
 ```
+
+### FreeBSD (13+)
+
+```sh
+sudo pkg install meson ninja pkgconf gcc14 \
+  wayland wayland-protocols libglvnd egl-wayland \
+  freetype2 fontconfig cairo pango harfbuzz \
+  libxkbcommon glib libsecret libsodium \
+  sdbus-cpp pipewire wireplumber polkit pam curl \
+  webp libjxl libsndfile librsvg2-rust \
+  libqalculate libxml2 md4c tomlplusplus libical nlohmann-json \
+  libepoll-shim
+```
+
+Notes for FreeBSD:
+
+- The two stb headers (`stb_image_resize2.h`, `stb_image_write.h`) are vendored under
+  `third_party/stb/`; no system stb package is needed on any platform.
+- `libepoll-shim` provides the epoll/eventfd APIs that the base system lacks; meson links it automatically on FreeBSD.
+- The base-system compiler does not search `/usr/local/include`; if a header installed under `/usr/local/include` is
+  not found, either copy it to `/usr/include` or add `-Dcpp_args=-I/usr/local/include`.
+- `jemalloc` is not used on FreeBSD (the base allocator already is jemalloc); leave `-Djemalloc=disabled`.
+- Some features are Linux-specific and unavailable on FreeBSD: RF kill/airplane mode, GPU utilization statistics,
+  keyboard backlight, hardware lock-key LEDs, and external-monitor DDC/CI brightness. Internal-panel brightness uses
+  `/dev/backlight` (backlight(9)) instead of sysfs. See `FREEBSD_PORT_PLAN.md` for details.
 
 Vendored dependencies, with no system package needed: `Wuffs`,
 `Luau`, `fzy`, and Material Color Utilities.

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <cstdlib>
 #include <cmath>
 #include <cstdio>
 #include <numbers>
@@ -10,6 +11,37 @@
 #include <system_error>
 
 namespace {
+  // Parses a leading float and advances `sv`. libc++ lacks floating-point
+  // std::from_chars, so fall back to strtod there; inputs are CSS color
+  // components where both parsers agree on the accepted grammar.
+  [[nodiscard]] bool parseFloatPrefix(std::string_view& sv, float& out) {
+    if (sv.empty()) {
+      return false;
+    }
+    float value = 0.0F;
+    std::size_t consumed = 0;
+#if defined(_LIBCPP_VERSION)
+    static thread_local std::string storage;
+    storage.assign(sv);
+    char* end = nullptr;
+    const double parsed = std::strtod(storage.c_str(), &end);
+    if (end == storage.c_str()) {
+      return false;
+    }
+    value = static_cast<float>(parsed);
+    consumed = static_cast<std::size_t>(end - storage.c_str());
+#else
+    const auto [ptr, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), value);
+    if (ec != std::errc{}) {
+      return false;
+    }
+    consumed = static_cast<std::size_t>(ptr - sv.data());
+#endif
+    sv.remove_prefix(consumed);
+    out = value;
+    return true;
+  }
+
 
   float linearizedColorChannel(float channel) {
     channel = std::clamp(channel, 0.0F, 1.0F);
@@ -281,11 +313,9 @@ bool tryParseCssColor(std::string_view text, Color& out) {
   auto parseAlpha = [&](std::string_view& sv, float& result) -> bool {
     skipSpaces(sv);
     float v = 0.0F;
-    const auto [ptr, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), v);
-    if (ec != std::errc{}) {
+    if (!parseFloatPrefix(sv, v)) {
       return false;
     }
-    sv.remove_prefix(static_cast<std::size_t>(ptr - sv.data()));
     if (!sv.empty() && sv.front() == '%') {
       sv.remove_prefix(1);
       v /= 100.0F;
@@ -305,11 +335,9 @@ bool tryParseCssColor(std::string_view text, Color& out) {
     auto parseChannel = [&](std::string_view& sv, float& result) -> bool {
       skipSpaces(sv);
       float v = 0.0F;
-      const auto [ptr, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), v);
-      if (ec != std::errc{}) {
+      if (!parseFloatPrefix(sv, v)) {
         return false;
       }
-      sv.remove_prefix(static_cast<std::size_t>(ptr - sv.data()));
       if (!sv.empty() && sv.front() == '%') {
         sv.remove_prefix(1);
         if (v < 0.0F || v > 100.0F) {
@@ -358,11 +386,9 @@ bool tryParseCssColor(std::string_view text, Color& out) {
     auto parseHue = [&](std::string_view& sv, float& result) -> bool {
       skipSpaces(sv);
       float v = 0.0F;
-      const auto [ptr, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), v);
-      if (ec != std::errc{}) {
+      if (!parseFloatPrefix(sv, v)) {
         return false;
       }
-      sv.remove_prefix(static_cast<std::size_t>(ptr - sv.data()));
       if (sv.starts_with("deg")) {
         sv.remove_prefix(3);
       } else if (sv.starts_with("grad")) {
@@ -383,11 +409,9 @@ bool tryParseCssColor(std::string_view text, Color& out) {
     auto parsePercent = [&](std::string_view& sv, float& result) -> bool {
       skipSpaces(sv);
       float v = 0.0F;
-      const auto [ptr, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), v);
-      if (ec != std::errc{}) {
+      if (!parseFloatPrefix(sv, v)) {
         return false;
       }
-      sv.remove_prefix(static_cast<std::size_t>(ptr - sv.data()));
       if (sv.empty() || sv.front() != '%' || v < 0.0F || v > 100.0F) {
         return false;
       }

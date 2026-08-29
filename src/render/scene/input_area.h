@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <functional>
 #include <initializer_list>
-#include <linux/input-event-codes.h>
+#include "core/input/input_event_codes.h"
 #include <string>
 #include <string_view>
 

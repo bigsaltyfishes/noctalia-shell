@@ -15,7 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <format>
-#include <linux/input-event-codes.h>
+#include "core/input/input_event_codes.h"
 #include <memory>
 #include <utility>
 

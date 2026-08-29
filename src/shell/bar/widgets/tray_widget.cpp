@@ -22,7 +22,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
-#include <linux/input-event-codes.h>
+#include "core/input/input_event_codes.h"
 #include <memory>
 #include <optional>
 #include <string>

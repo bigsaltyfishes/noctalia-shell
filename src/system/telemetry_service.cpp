@@ -15,6 +15,10 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <string>
+#if defined(__FreeBSD__)
+#include <sys/param.h>
+#include <sys/sysctl.h>
+#endif
 
 namespace {
 
@@ -60,6 +64,14 @@ namespace {
   }
 
   int memoryTotalGb() {
+#if defined(__FreeBSD__)
+    std::uint64_t physMem = 0;
+    std::size_t len = sizeof(physMem);
+    if (::sysctlbyname("hw.physmem", &physMem, &len, nullptr, 0) != 0 || physMem == 0) {
+      return 0;
+    }
+    return static_cast<int>((physMem + (1ULL << 29)) / (1ULL << 30));
+#else
     std::ifstream file("/proc/meminfo");
     if (!file.is_open()) {
       return 0;
@@ -82,6 +94,7 @@ namespace {
       }
     }
     return 0;
+#endif
   }
 
 } // namespace

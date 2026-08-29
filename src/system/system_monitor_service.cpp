@@ -20,9 +20,17 @@
 #include <sstream>
 #include <string>
 #include <sys/statvfs.h>
-#include <unordered_map>
-#include <vector>
+#if defined(__FreeBSD__)
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <sys/param.h>
+#include <sys/sysctl.h>
+#include <vm/vm_param.h>
+#endif
 
+#include <unordered_map>
+
+#include <vector>
 namespace {
 
   [[nodiscard]] SystemStats makeInitialHistoryStats() {
@@ -570,6 +578,7 @@ namespace {
   constexpr Logger kLog("sysmon");
 
   std::uint64_t readZfsEvictableArcKb() {
+#if defined(__linux__)
     std::ifstream file{"/proc/spl/kstat/zfs/arcstats"};
     if (!file.is_open()) {
       return 0;
@@ -592,6 +601,19 @@ namespace {
         }
       }
     }
+#else
+    // OpenZFS on FreeBSD exposes the same ARC statistics as sysctls.
+    std::uint64_t arcSize = 0;
+    std::uint64_t arcMin = 0;
+    std::size_t len = sizeof(arcSize);
+    if (::sysctlbyname("kstat.zfs.misc.arcstats.size", &arcSize, &len, nullptr, 0) != 0) {
+      return 0;
+    }
+    len = sizeof(arcMin);
+    if (::sysctlbyname("kstat.zfs.misc.arcstats.c_min", &arcMin, &len, nullptr, 0) != 0) {
+      return 0;
+    }
+#endif
 
     if (arcSize > arcMin) {
       return (arcSize - arcMin) / 1024;
@@ -1582,6 +1604,12 @@ void SystemMonitorService::releaseGpuReaders() {
 }
 
 std::optional<SystemMonitorService::MemData> SystemMonitorService::readMemoryKb() {
+  std::uint64_t totalKb = 0;
+  std::uint64_t availableKb = 0;
+  std::uint64_t swapTotalKb = 0;
+  std::uint64_t swapFreeKb = 0;
+
+#if defined(__linux__)
   std::ifstream file{"/proc/meminfo"};
   if (!file.is_open()) {
     return std::nullopt;
@@ -1590,11 +1618,6 @@ std::optional<SystemMonitorService::MemData> SystemMonitorService::readMemoryKb(
   std::string key;
   std::uint64_t value_kb = 0;
   std::string unit;
-
-  std::uint64_t totalKb = 0;
-  std::uint64_t availableKb = 0;
-  std::uint64_t swapTotalKb = 0;
-  std::uint64_t swapFreeKb = 0;
 
   while (file >> key >> value_kb >> unit) {
     if (key == "MemTotal:") {
@@ -1612,6 +1635,64 @@ std::optional<SystemMonitorService::MemData> SystemMonitorService::readMemoryKb(
       break;
     }
   }
+#elif defined(__FreeBSD__)
+  // "Available" approximates Linux' MemAvailable: free + inactive + cache pages
+  // are reclaimable without swapping. The vm.stats sysctls report 32-bit
+  // counters, so accept both 4- and 8-byte values when reading.
+  auto sysctlUint = [](const char* name, std::uint64_t& out) {
+    out = 0;
+    std::uint32_t narrow = 0;
+    std::size_t len = sizeof(narrow);
+    if (::sysctlbyname(name, &narrow, &len, nullptr, 0) == 0 && len == sizeof(narrow)) {
+      out = narrow;
+      return true;
+    }
+    len = sizeof(out);
+    return ::sysctlbyname(name, &out, &len, nullptr, 0) == 0 && len == sizeof(out);
+  };
+
+  std::uint64_t pageSize = 0;
+  std::uint64_t pageCount = 0;
+  std::uint64_t freeCount = 0;
+  std::uint64_t inactiveCount = 0;
+  std::uint64_t cacheCount = 0;
+  if (!sysctlUint("hw.pagesize", pageSize) || !sysctlUint("vm.stats.vm.v_page_count", pageCount)
+      || !sysctlUint("vm.stats.vm.v_free_count", freeCount) || !sysctlUint("vm.stats.vm.v_inactive_count", inactiveCount)
+      || !sysctlUint("vm.stats.vm.v_cache_count", cacheCount)) {
+    return std::nullopt;
+  }
+
+  constexpr std::uint64_t kBytesPerKb = 1024;
+  totalKb = pageCount * pageSize / kBytesPerKb;
+  availableKb = (freeCount + inactiveCount + cacheCount) * pageSize / kBytesPerKb;
+
+  // Swap devices live in the "vm.swap_info" array; unused trailing slots report
+  // NODEV. The mib is resolved once, then reissued with the per-slot index.
+  int swapMib[3]{0, 0, 0};
+  std::size_t swapMibLen = sizeof(swapMib);
+  if (::sysctlnametomib("vm.swap_info", swapMib, &swapMibLen) == 0 && swapMibLen >= 3) {
+    for (int slot = 0; slot < 16; ++slot) {
+      swapMib[swapMibLen - 1] = slot;
+      struct xswdev xsw{};
+      std::size_t len = sizeof(xsw);
+      if (::sysctl(swapMib, swapMibLen, &xsw, &len, nullptr, 0) != 0) {
+        break;
+      }
+      if (xsw.xsw_version != XSWDEV_VERSION) {
+        return std::nullopt;
+      }
+      if (xsw.xsw_dev == NODEV) {
+        break;
+      }
+      const std::uint64_t devTotalKb = static_cast<std::uint64_t>(xsw.xsw_nblks) * pageSize / kBytesPerKb;
+      const std::uint64_t devUsedKb = static_cast<std::uint64_t>(xsw.xsw_used) * pageSize / kBytesPerKb;
+      swapTotalKb += devTotalKb;
+      swapFreeKb += devTotalKb > devUsedKb ? devTotalKb - devUsedKb : 0;
+    }
+  }
+#else
+  return std::nullopt;
+#endif
 
   if (totalKb == 0 || availableKb == 0 || availableKb > totalKb) {
     return std::nullopt;
@@ -1908,12 +1989,14 @@ std::optional<SystemMonitorService::GpuVramData> SystemMonitorService::readGpuVr
 
 std::optional<std::unordered_map<std::string, SystemMonitorService::NetIfaceBytes>>
 SystemMonitorService::readNetBytes() {
+  std::unordered_map<std::string, NetIfaceBytes> result;
+
+#if defined(__linux__)
   std::ifstream file{"/proc/net/dev"};
   if (!file.is_open()) {
     return std::nullopt;
   }
 
-  std::unordered_map<std::string, NetIfaceBytes> result;
   std::string line;
   // Skip 2 header lines
   std::getline(file, line);
@@ -1947,11 +2030,38 @@ SystemMonitorService::readNetBytes() {
 
     result[iface] = {rxBytes, txBytes};
   }
+#elif defined(__FreeBSD__)
+  struct ifaddrs* list = nullptr;
+  if (::getifaddrs(&list) != 0) {
+    return std::nullopt;
+  }
+
+  for (const auto* ifa = list; ifa != nullptr; ifa = ifa->ifa_next) {
+    if (ifa->ifa_name == nullptr || ifa->ifa_addr == nullptr || ifa->ifa_addr->sa_family != AF_LINK) {
+      continue;
+    }
+    const auto* data = static_cast<const struct if_data*>(static_cast<const void*>(ifa->ifa_data));
+    if (data == nullptr) {
+      continue;
+    }
+    const std::uint64_t rxBytes = data->ifi_ibytes;
+    const std::uint64_t txBytes = data->ifi_obytes;
+    if (rxBytes == 0 && txBytes == 0) {
+      continue;
+    }
+    result[ifa->ifa_name] = {rxBytes, txBytes};
+  }
+
+  ::freeifaddrs(list);
+#else
+  return std::nullopt;
+#endif
 
   return result;
 }
 
 std::optional<std::array<double, 3>> SystemMonitorService::readLoadAvg() {
+#if defined(__linux__)
   std::ifstream file{"/proc/loadavg"};
   if (!file.is_open()) {
     return std::nullopt;
@@ -1963,4 +2073,11 @@ std::optional<std::array<double, 3>> SystemMonitorService::readLoadAvg() {
     return std::nullopt;
   }
   return la;
+#else
+  std::array<double, 3> la{};
+  if (::getloadavg(la.data(), 3) != 3) {
+    return std::nullopt;
+  }
+  return la;
+#endif
 }

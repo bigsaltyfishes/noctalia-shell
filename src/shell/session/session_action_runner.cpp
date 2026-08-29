@@ -87,16 +87,34 @@ namespace {
 
   [[nodiscard]] const std::vector<std::vector<std::string>>& rebootCommandVariants() {
     static const std::vector<std::vector<std::string>> variants = {
-        {"systemctl", "reboot"}, {"loginctl", "reboot"}, {"reboot"},         {"/sbin/reboot"},
-        {"/usr/sbin/reboot"},    {"pkexec", "reboot"},   {"run0", "reboot"}, {"sudo", "-n", "reboot"},
+        {"systemctl", "reboot"},
+        {"loginctl", "reboot"},
+        {"reboot"},
+        {"/sbin/reboot"},
+        {"/usr/sbin/reboot"},
+        // FreeBSD fallbacks (no systemd/logind).
+        {"/sbin/shutdown", "-r", "now"},
+        {"/usr/sbin/shutdown", "-r", "now"},
+        {"pkexec", "reboot"},
+        {"run0", "reboot"},
+        {"sudo", "-n", "reboot"},
     };
     return variants;
   }
 
   [[nodiscard]] const std::vector<std::vector<std::string>>& shutdownCommandVariants() {
     static const std::vector<std::vector<std::string>> variants = {
-        {"systemctl", "poweroff"}, {"loginctl", "poweroff"}, {"poweroff"},         {"/sbin/poweroff"},
-        {"/usr/sbin/poweroff"},    {"pkexec", "poweroff"},   {"run0", "poweroff"}, {"sudo", "-n", "poweroff"},
+        {"systemctl", "poweroff"},
+        {"loginctl", "poweroff"},
+        {"poweroff"},
+        {"/sbin/poweroff"},
+        {"/usr/sbin/poweroff"},
+        // FreeBSD fallbacks (no systemd/logind).
+        {"/sbin/shutdown", "-p", "now"},
+        {"/usr/sbin/shutdown", "-p", "now"},
+        {"pkexec", "poweroff"},
+        {"run0", "poweroff"},
+        {"sudo", "-n", "poweroff"},
     };
     return variants;
   }

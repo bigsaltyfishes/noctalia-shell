@@ -83,6 +83,38 @@ namespace {
     return ok;
   }
 
+  bool drainFiresOnModify() {
+    Inotify in;
+    const auto dir = uniqueTempDir();
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+
+    const auto file = dir / "mod.txt";
+    { std::ofstream{file} << "one"; }
+
+    uint32_t mask = 0;
+    std::string name;
+    bool fired = false;
+    in.watch(dir, IN_MODIFY);
+    in.drain([&](const inotify_event*) {}); // clear baseline
+
+    { std::ofstream{file, std::ios::app} << "two"; }
+    sleep(1); // ensure mtime granularity difference
+
+    in.drain([&](const inotify_event* e) {
+      fired = true;
+      mask = e->mask;
+      if (e->len > 0) {
+        name = std::string(e->name);
+      }
+    });
+
+    const bool ok = expect(fired, "modify of an existing file should fire")
+        && expect((mask & IN_MODIFY) != 0, "mask should contain IN_MODIFY") && expect(name == "mod.txt", "name should match");
+    cleanup(dir);
+    return ok;
+  }
+
   bool drainWithCallbackFiresForAllWatches() {
     Inotify in;
     const auto dir = uniqueTempDir();
@@ -169,6 +201,8 @@ namespace {
     return ok;
   }
 
+#if defined(__linux__)
+  // Depends on /proc/sys/fs/inotify and file-watch overflow semantics.
   bool queueOverflowIsForwarded() {
     Inotify in;
     const auto dir = uniqueTempDir();
@@ -217,6 +251,7 @@ namespace {
     cleanup(dir);
     return ok;
   }
+#endif
 
 } // namespace
 
@@ -226,8 +261,11 @@ int main() {
   ok = watchOnMissingPathReturnsNullopt() && ok;
   ok = watchOnEmptyPathReturnsNullopt() && ok;
   ok = drainWithCallbackFiresOnEvent() && ok;
+  ok = drainFiresOnModify() && ok;
   ok = drainWithCallbackFiresForAllWatches() && ok;
   ok = unwatchSilencesCallbackAndKeepsObjectUsable() && ok;
+#if defined(__linux__)
   ok = queueOverflowIsForwarded() && ok;
+#endif
   return ok ? 0 : 1;
 }

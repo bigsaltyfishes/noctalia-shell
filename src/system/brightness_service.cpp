@@ -33,6 +33,11 @@
 #include <string_view>
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
+#if defined(__FreeBSD__)
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <sys/backlight.h>
+#endif
 #include <thread>
 #include <unistd.h>
 #include <unordered_map>
@@ -778,12 +783,19 @@ struct BrightnessService::Impl {
   }
 
   void enumerateBacklights() {
+#if defined(__FreeBSD__)
+    // FreeBSD has no sysfs backlight class; internal panels expose
+    // backlight(9) devices under /dev/backlight instead.
+    enumerateBsdBacklights();
+    return;
+#endif
     const std::string backlightDir = "/sys/class/backlight";
     DIR* dir = ::opendir(backlightDir.c_str());
     if (dir == nullptr) {
       kLog.debug("no /sys/class/backlight directory");
       return;
     }
+
 
     std::unordered_map<std::string, BacklightCandidate> bestByConnector;
     while (auto* entry = ::readdir(dir)) {
@@ -886,6 +898,78 @@ struct BrightnessService::Impl {
       internals.push_back(std::move(candidate.display));
     }
   }
+
+#if defined(__FreeBSD__)
+  // FreeBSD internal-panel backlights: /dev/backlight/<name> devices driven by
+  // the backlight(9) ioctls. The devices carry no connector association, so all
+  // of them are attached to the first active output.
+  void enumerateBsdBacklights() {
+    const std::string backlightDir = "/dev/backlight";
+    DIR* dir = ::opendir(backlightDir.c_str());
+    if (dir == nullptr) {
+      kLog.debug("no /dev/backlight directory");
+      return;
+    }
+
+    const WaylandOutput* owner = nullptr;
+    for (const auto& output : wayland.outputs()) {
+      if (output.done && !output.connectorName.empty()) {
+        owner = &output;
+        break;
+      }
+    }
+    if (owner == nullptr) {
+      kLog.debug("no active output to attach FreeBSD backlight devices to");
+      ::closedir(dir);
+      return;
+    }
+
+    while (auto* entry = ::readdir(dir)) {
+      const std::string name = entry->d_name;
+      if (name == "." || name == "..") {
+        continue;
+      }
+
+      const std::string devicePath = backlightDir + "/" + name;
+      const int fd = ::open(devicePath.c_str(), O_RDWR | O_CLOEXEC);
+      if (fd < 0) {
+        kLog.debug("cannot open backlight device '{}'", devicePath);
+        continue;
+      }
+      struct backlight_props props{};
+      const bool ok = ::ioctl(fd, BACKLIGHTGETSTATUS, &props) == 0;
+      ::close(fd);
+      if (!ok || props.nlevels == 0 || props.brightness >= props.nlevels) {
+        kLog.debug("backlight device '{}' reports no usable range", devicePath);
+        continue;
+      }
+
+      DisplayInternal display;
+      display.backend = RuntimeBackend::Backlight;
+      // FreeBSD models brightness as an index into the device's level table.
+      display.maxRaw = static_cast<int>(props.nlevels);
+      display.backlightName = name;
+      // Reused by writeSysfsBacklight as the control-device path on FreeBSD.
+      display.sysfsPath = devicePath;
+      display.connectorName = owner->connectorName;
+      display.pub.id = owner->connectorName;
+      display.pub.brightness =
+          std::clamp(static_cast<float>(props.brightness) / static_cast<float>(props.nlevels), 0.0F, 1.0F);
+      applyOutputMetadata(display.pub, *owner);
+      if (display.pub.label.empty()) {
+        display.pub.label = owner->connectorName;
+      }
+
+      kLog.info(
+          "found FreeBSD backlight '{}' level={}/{} connector={}", name, props.brightness, props.nlevels,
+          owner->connectorName
+      );
+      internals.push_back(std::move(display));
+    }
+
+    ::closedir(dir);
+  }
+#endif
 
   void scheduleDdcDetect() {
     if (!activeConfig.enableDdcutil) {
@@ -1009,6 +1093,22 @@ struct BrightnessService::Impl {
   }
 
   bool writeSysfsBacklight(DisplayInternal& display, std::uint32_t rawValue) {
+#if defined(__FreeBSD__)
+    const int fd = ::open(display.sysfsPath.c_str(), O_WRONLY | O_CLOEXEC);
+    if (fd < 0) {
+      kLog.warn("cannot open backlight device '{}'", display.sysfsPath);
+      return false;
+    }
+    struct backlight_props props{};
+    props.brightness = rawValue;
+    props.nlevels = static_cast<unsigned int>(display.maxRaw);
+    const bool ok = ::ioctl(fd, BACKLIGHTUPDATESTATUS, &props) == 0;
+    ::close(fd);
+    if (!ok) {
+      kLog.warn("BACKLIGHTUPDATESTATUS failed for '{}': errno={}", display.sysfsPath, errno);
+      return false;
+    }
+#else
     const std::string brightnessPath = display.sysfsPath + "/brightness";
     std::ofstream file(brightnessPath);
     if (!file.is_open()) {
@@ -1027,6 +1127,7 @@ struct BrightnessService::Impl {
       changeCallback();
     }
     return true;
+#endif
   }
 
   void setDdcBrightness(DisplayInternal& display, float value) {

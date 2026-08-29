@@ -6,7 +6,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
-#include <linux/input-event-codes.h>
+#include "core/input/input_event_codes.h"
 #include <unistd.h>
 #include <wayland-client-core.h>
 #include <xkbcommon/xkbcommon.h>

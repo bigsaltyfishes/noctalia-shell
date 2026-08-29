@@ -1,5 +1,7 @@
 #include "calendar/google_client.h"
 
+#include "time/tz_compat.h"
+
 #include "calendar/event_link.h"
 #include "calendar/google_calendar_list.h"
 #include "core/log.h"
@@ -41,11 +43,13 @@ namespace calendar {
       if (!ymd.ok()) {
         return std::nullopt;
       }
-      try {
-        return toSystem(time_point_cast<seconds>(current_zone()->to_sys(local_days{ymd})));
-      } catch (...) {
-        return toSystem(sys_days{ymd});
+      const int year = static_cast<int>(ymd.year());
+      const unsigned mo = static_cast<unsigned>(ymd.month());
+      const unsigned dy = static_cast<unsigned>(ymd.day());
+      if (const auto sys = noctalia::tz::toSys("", year, mo, dy, 0, 0, 0)) {
+        return toSystem(*sys);
       }
+      return toSystem(sys_days{ymd});
     }
 
     // RFC 3339 "YYYY-MM-DDTHH:MM:SS[.fff](Z|±HH:MM)" -> UTC time_point.

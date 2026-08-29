@@ -11,9 +11,14 @@
 #include <string>
 #include <string_view>
 #include <sys/resource.h>
+#if defined(__FreeBSD__)
+#include <sys/user.h>
+#include <libutil.h>
+#endif
 #include <unistd.h>
 #include <unordered_map>
 #include <vector>
+
 
 namespace {
 
@@ -68,6 +73,22 @@ namespace {
     return target;
   }
 
+  [[nodiscard]] std::vector<std::pair<std::string, std::size_t>>
+  sortedTargets(const std::unordered_map<std::string, std::size_t>& targetCounts) {
+    std::vector<std::pair<std::string, std::size_t>> targets;
+    targets.reserve(targetCounts.size());
+    for (auto& [target, targetCount] : targetCounts) {
+      targets.emplace_back(target, targetCount);
+    }
+    std::ranges::sort(targets, [](const auto& lhs, const auto& rhs) {
+      if (lhs.second != rhs.second) {
+        return lhs.second > rhs.second;
+      }
+      return lhs.first < rhs.first;
+    });
+    return targets;
+  }
+
   [[nodiscard]] std::string readFdTarget(const char* fdName) {
     const std::string path = std::string("/proc/self/fd/") + fdName;
     std::vector<char> buffer(512);
@@ -116,6 +137,66 @@ void ProcessFds::raiseOpenFileLimit() {
 
 std::string ProcessFds::describeOpenFileDescriptors(std::size_t maxTargets) {
   const std::string limit = rlimitSummary();
+
+#if defined(__FreeBSD__)
+  // /proc/self/fd requires mounted procfs on FreeBSD; the native source is
+  // KERN_PROC_FILEDESC via kinfo_getfile(3).
+  int count = 0;
+  kinfo_file* entries = kinfo_getfile(::getpid(), &count);
+  if (entries == nullptr) {
+    return std::format("open_fds=unavailable (kinfo_getfile failed), {}", limit);
+  }
+
+  auto bucketForType = [](int type) -> std::string {
+    switch (type) {
+    case KF_TYPE_VNODE:
+      return "vnode";
+    case KF_TYPE_SOCKET:
+      return "socket";
+    case KF_TYPE_PIPE:
+      return "pipe";
+    case KF_TYPE_FIFO:
+      return "fifo";
+    case KF_TYPE_KQUEUE:
+      return "kqueue";
+    case KF_TYPE_MQUEUE:
+      return "mqueue";
+    case KF_TYPE_SHM:
+      return "shm";
+    case KF_TYPE_SEM:
+      return "sem";
+    case KF_TYPE_PTS:
+      return "pts";
+    case KF_TYPE_DEV:
+      return "dev";
+    case KF_TYPE_EVENTFD:
+      return "eventfd";
+    default:
+      return "other";
+    }
+  };
+
+  std::unordered_map<std::string, std::size_t> targetCounts;
+  for (int i = 0; i < count; ++i) {
+    const kinfo_file& entry = entries[i];
+    if (entry.kf_fd < 0) {
+      continue; // closed slot
+    }
+    ++count;
+    std::string target;
+    if (entry.kf_type == KF_TYPE_VNODE && entry.kf_path[0] != '\0') {
+      target = bucketTarget(std::string{entry.kf_path});
+    } else if (entry.kf_type == KF_TYPE_SHM && entry.kf_path[0] != '\0') {
+      target = bucketTarget("shm:" + std::string{entry.kf_path});
+    } else {
+      target = bucketForType(entry.kf_type);
+    }
+    ++targetCounts[std::move(target)];
+  }
+  ::free(entries);
+
+  const auto targets = sortedTargets(targetCounts);
+#else
   DIR* dir = opendir("/proc/self/fd");
   if (dir == nullptr) {
     return std::format("open_fds=unavailable (opendir /proc/self/fd failed: {}), {}", std::strerror(errno), limit);
@@ -138,17 +219,8 @@ std::string ProcessFds::describeOpenFileDescriptors(std::size_t maxTargets) {
   }
   closedir(dir);
 
-  std::vector<std::pair<std::string, std::size_t>> targets;
-  targets.reserve(targetCounts.size());
-  for (auto& [target, targetCount] : targetCounts) {
-    targets.emplace_back(target, targetCount);
-  }
-  std::ranges::sort(targets, [](const auto& lhs, const auto& rhs) {
-    if (lhs.second != rhs.second) {
-      return lhs.second > rhs.second;
-    }
-    return lhs.first < rhs.first;
-  });
+  const auto targets = sortedTargets(targetCounts);
+#endif
 
   std::string out = std::format("open_fds={}, {}", count, limit);
   if (!targets.empty() && maxTargets > 0) {

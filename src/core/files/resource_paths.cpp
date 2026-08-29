@@ -1,5 +1,6 @@
 #include "core/files/resource_paths.h"
 
+#include "core/files/self_path.h"
 #include "core/log.h"
 
 #include <algorithm>
@@ -38,14 +39,7 @@ namespace paths {
     }
 
     std::optional<std::filesystem::path> executablePath() {
-      std::array<char, 4096> buffer{};
-      const ssize_t count = ::readlink("/proc/self/exe", buffer.data(), buffer.size() - 1);
-      if (count <= 0 || static_cast<std::size_t>(count) >= buffer.size() - 1) {
-        return std::nullopt;
-      }
-
-      buffer[static_cast<std::size_t>(count)] = '\0';
-      return std::filesystem::path(buffer.data());
+      return SelfPath::selfExePath();
     }
 
     void appendUnique(std::vector<std::filesystem::path>& candidates, const std::filesystem::path& candidate) {

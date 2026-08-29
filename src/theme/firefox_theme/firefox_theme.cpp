@@ -3,6 +3,7 @@
 #include "cli/help.h"
 #include "cli/parse.h"
 #include "cli/schema_firefox_theme.h"
+#include "core/files/self_path.h"
 #include "core/inotify/inotify.h"
 #include "theme/firefox_theme/css.h"
 #include "theme/firefox_theme/native_messaging.h"
@@ -69,13 +70,8 @@ namespace noctalia::theme {
     }
 
     [[nodiscard]] std::string selfExePath() {
-      char buf[4096];
-      const ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-      if (n <= 0) {
-        return {};
-      }
-      buf[n] = '\0';
-      return std::string(buf, static_cast<std::size_t>(n));
+      const auto path = SelfPath::selfExePath();
+      return path ? path->string() : std::string{};
     }
 
     bool setCloexec(int fd) {

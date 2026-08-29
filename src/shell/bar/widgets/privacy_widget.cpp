@@ -32,8 +32,14 @@ namespace {
   }
 
   [[nodiscard]] std::string joinApps(const std::vector<std::string>& apps) {
-    auto joined = apps | std::views::join_with(std::string_view{", "});
-    return {joined.begin(), joined.end()};
+    std::string out;
+    for (std::size_t i = 0; i < apps.size(); ++i) {
+      if (i != 0) {
+        out += ", ";
+      }
+      out += apps[i];
+    }
+    return out;
   }
 
 } // namespace

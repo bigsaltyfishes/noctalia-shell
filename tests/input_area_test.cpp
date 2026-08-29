@@ -3,7 +3,7 @@
 
 #include <chrono>
 #include <cstdio>
-#include <linux/input-event-codes.h>
+#include "core/input/input_event_codes.h"
 #include <memory>
 #include <print>
 #include <string>

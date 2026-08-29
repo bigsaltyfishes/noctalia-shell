@@ -1,5 +1,7 @@
 #include "calendar/ical_parser.h"
 
+#include "time/tz_compat.h"
+
 #include "calendar/event_link.h"
 #include "core/log.h"
 
@@ -67,11 +69,11 @@ namespace calendar {
         return {};
       }
 
-      try {
-        return toSystem(time_point_cast<seconds>(current_zone()->to_sys(local_days{ymd})));
-      } catch (...) {
-        return toSystem(sys_days{ymd});
+      if (const auto sys =
+              noctalia::tz::toSys("", t.year, static_cast<unsigned>(t.month), static_cast<unsigned>(t.day), 0, 0, 0)) {
+        return toSystem(*sys);
       }
+      return toSystem(sys_days{ymd});
     }
 
     std::chrono::system_clock::time_point localDateTime(int y, int mo, int d, int h, int mi, int s) {
@@ -81,12 +83,10 @@ namespace calendar {
         return {};
       }
 
-      const local_seconds local = local_days{ymd} + hours{h} + minutes{mi} + seconds{s};
-      try {
-        return toSystem(time_point_cast<seconds>(current_zone()->to_sys(local)));
-      } catch (...) {
-        return toSystem(sys_days{ymd} + hours{h} + minutes{mi} + seconds{s});
+      if (const auto sys = noctalia::tz::toSys("", y, mo, d, h, mi, s)) {
+        return toSystem(*sys);
       }
+      return toSystem(sys_days{ymd} + hours{h} + minutes{mi} + seconds{s});
     }
 
     std::chrono::system_clock::time_point localDateTime(const icaltimetype& t) {
@@ -143,11 +143,10 @@ namespace calendar {
     icaltimetype localICalTime(std::chrono::system_clock::time_point t) {
       using namespace std::chrono;
       sys_seconds wallTime = floor<seconds>(t);
-      try {
-        const local_seconds local = floor<seconds>(current_zone()->to_local(t));
-        wallTime = sys_seconds{local.time_since_epoch()};
-      } catch (...) {
-        // Keep UTC wall fields when the system timezone database is unavailable.
+      const auto reading = noctalia::tz::toLocal("", floor<seconds>(t));
+      if (reading.ok) {
+        // Present the wall fields in the system timezone.
+        wallTime = sys_seconds{reading.local.time_since_epoch()};
       }
 
       const sys_days day = floor<days>(wallTime);

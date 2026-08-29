@@ -29,10 +29,11 @@
 #include "ui/ui_tree.h"
 
 #include <charconv>
+#include <cstdlib>
 #include <cmath>
 #include <format>
 #include <functional>
-#include <linux/input-event-codes.h>
+#include "core/input/input_event_codes.h"
 #include <optional>
 #include <unordered_set>
 #include <utility>
@@ -163,8 +164,22 @@ namespace ui {
         const std::string_view alphaText = base.substr(slash + 1);
         base = base.substr(0, slash);
         const auto* end = alphaText.data() + alphaText.size();
+        bool alphaValid = false;
+#if defined(_LIBCPP_VERSION)
+        // libc++ lacks floating-point std::from_chars.
+        static thread_local std::string alphaStorage;
+        alphaStorage.assign(alphaText);
+        char* parsedEnd = nullptr;
+        const double parsedAlpha = std::strtod(alphaStorage.c_str(), &parsedEnd);
+        alphaValid = parsedEnd == alphaStorage.c_str() + alphaText.size();
+        alpha = static_cast<float>(parsedAlpha);
+#else
         if (const auto res = std::from_chars(alphaText.data(), end, alpha);
-            res.ec != std::errc{} || res.ptr != end || alpha < 0.0F || alpha > 1.0F) {
+            res.ec == std::errc{} && res.ptr == end) {
+          alphaValid = true;
+        }
+#endif
+        if (!alphaValid || alpha < 0.0F || alpha > 1.0F) {
           kLog.warn(
               "ui node '{}': invalid alpha '{}' in color '{}' for prop '{}' (expected 0.0-1.0)", node.type, alphaText,
               *token, key

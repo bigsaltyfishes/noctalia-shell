@@ -7,6 +7,11 @@
 #include <string_view>
 #include <unordered_map>
 
+#if defined(__FreeBSD__)
+#include <sys/mount.h>
+#include <sys/param.h>
+#endif
+
 namespace {
 
   // /proc/mounts escapes space, tab, newline and backslash as octal \NNN sequences.
@@ -31,6 +36,50 @@ namespace {
 
 } // namespace
 
+#if defined(__FreeBSD__)
+std::vector<DiskMount> physicalDiskMounts(const std::filesystem::path& /*mountsFile*/) {
+  // FreeBSD has no /proc/mounts; getfsstat(3) is the native equivalent. ZFS
+  // datasets appear as separate mounts (source "pool/dataset") and are kept,
+  // mirroring how Linux reports btrfs subvolumes.
+  const int count = ::getfsstat(nullptr, 0, MNT_WAIT);
+  if (count <= 0) {
+    return {};
+  }
+
+  std::vector<struct statfs> entries(static_cast<std::size_t>(count));
+  if (::getfsstat(entries.data(), static_cast<int>(entries.size() * sizeof(struct statfs)), MNT_WAIT) < 0) {
+    return {};
+  }
+
+  std::unordered_map<std::string, DiskMount> bySource;
+  for (const auto& fsEntry : entries) {
+    std::string source{fsEntry.f_mntfromname};
+    std::string path{fsEntry.f_mntonname};
+    std::string filesystem{fsEntry.f_fstypename};
+
+    const bool isDevice = source.starts_with("/dev/") && !source.starts_with("/dev/md");
+    if (!isDevice && filesystem != "zfs") {
+      continue;
+    }
+    if (path == "/boot" || path.starts_with("/boot/")) {
+      continue;
+    }
+
+    const auto it = bySource.find(source);
+    if (it == bySource.end() || path.size() < it->second.path.size()) {
+      bySource[source] = DiskMount{.path = std::move(path), .source = source, .filesystem = std::move(filesystem)};
+    }
+  }
+
+  std::vector<DiskMount> mounts;
+  mounts.reserve(bySource.size());
+  for (auto& entry : bySource) {
+    mounts.push_back(std::move(entry.second));
+  }
+  std::ranges::sort(mounts, {}, &DiskMount::path);
+  return mounts;
+}
+#else
 std::vector<DiskMount> physicalDiskMounts(const std::filesystem::path& mountsFile) {
   std::ifstream file{mountsFile};
   if (!file.is_open()) {
@@ -73,3 +122,4 @@ std::vector<DiskMount> physicalDiskMounts(const std::filesystem::path& mountsFil
   std::ranges::sort(mounts, {}, &DiskMount::path);
   return mounts;
 }
+#endif

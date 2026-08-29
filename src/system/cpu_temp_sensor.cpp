@@ -5,6 +5,10 @@
 
 #include <algorithm>
 #include <charconv>
+#if defined(__FreeBSD__)
+#include <cstdio>
+#include <sys/sysctl.h>
+#endif
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -315,6 +319,36 @@ namespace noctalia::system::cpu_temp {
       return Reading{.tempC = best->tempC, .source = formatThermalSource(best->type, best->inputPath)};
     }
 
+#if defined(__FreeBSD__)
+    // coretemp(4)/amdtemp(4) expose per-core temperatures as sysctls in the
+    // "NN.NC" format (already Celsius). The CPU reading is their average.
+    [[nodiscard]] std::optional<Reading> chooseSysctlCpuSensor() {
+      double sum = 0.0;
+      int count = 0;
+      for (int core = 0;; ++core) {
+        char mibName[64];
+        std::snprintf(mibName, sizeof(mibName), "dev.cpu.%d.temperature", core);
+        char value[32];
+        std::size_t len = sizeof(value);
+        if (::sysctlbyname(mibName, value, &len, nullptr, 0) != 0) {
+          break;
+        }
+        value[len < sizeof(value) ? len : sizeof(value) - 1] = '\0';
+        float celsius = 0.0F;
+        if (std::sscanf(value, "%fC", &celsius) != 1) {
+          continue;
+        }
+        sum += static_cast<double>(celsius);
+        ++count;
+      }
+
+      if (count == 0) {
+        return std::nullopt;
+      }
+      return Reading{.tempC = sum / static_cast<double>(count), .source = "sysctl:dev.cpu.*.temperature"};
+    }
+#endif
+
     [[nodiscard]] ProbeResult readConfiguredSensor(const std::filesystem::path& configuredPath) {
       namespace fs = std::filesystem;
 
@@ -372,6 +406,12 @@ namespace noctalia::system::cpu_temp {
     if (!configuredSensorPath.empty()) {
       return readConfiguredSensor(std::filesystem::path{configuredSensorPath});
     }
+
+#if defined(__FreeBSD__)
+    if (auto sysctlSensor = chooseSysctlCpuSensor(); sysctlSensor.has_value()) {
+      return ProbeResult{.reading = std::move(sysctlSensor), .error = {}};
+    }
+#endif
 
     if (auto hwmon = chooseKnownHwmonSensor(hwmonRoot); hwmon.has_value()) {
       return ProbeResult{.reading = std::move(hwmon), .error = {}};

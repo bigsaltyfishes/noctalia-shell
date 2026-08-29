@@ -11,6 +11,11 @@
 #include <filesystem>
 #include <fstream>
 #include <pwd.h>
+#if defined(__FreeBSD__)
+#include <sys/param.h>
+#include <sys/sysctl.h>
+#include <sys/time.h>
+#endif
 #include <string>
 #include <string_view>
 #include <sys/stat.h>
@@ -153,6 +158,16 @@ std::string osAgeLabel() {
   std::uint64_t oldest = 0;
 
   for (const char* path : {"/", "/etc", "/var", "/home"}) {
+#if defined(__FreeBSD__)
+    // BSD stat(2) exposes the inode creation time directly.
+    struct stat st{};
+    if (stat(path, &st) == 0 && st.st_birthtim.tv_sec > 0) {
+      const auto birth = static_cast<std::uint64_t>(st.st_birthtim.tv_sec);
+      if (oldest == 0 || birth < oldest) {
+        oldest = birth;
+      }
+    }
+#else
     struct statx sx{};
     if (statx(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW, STATX_BTIME, &sx) == 0
         && (sx.stx_mask & STATX_BTIME) != 0
@@ -162,6 +177,7 @@ std::string osAgeLabel() {
         oldest = birth;
       }
     }
+#endif
   }
 
   if (oldest == 0) {
@@ -219,6 +235,20 @@ std::string hostName() {
 }
 
 std::optional<std::chrono::seconds> systemUptime() {
+#if defined(__FreeBSD__)
+  // Derive uptime from the boot time recorded by the kernel.
+  struct timeval boottime{};
+  std::size_t len = sizeof(boottime);
+  int mib[2]{CTL_KERN, KERN_BOOTTIME};
+  if (::sysctl(mib, 2, &boottime, &len, nullptr, 0) != 0 || boottime.tv_sec <= 0) {
+    return std::nullopt;
+  }
+  const std::time_t now = std::time(nullptr);
+  if (now <= static_cast<std::time_t>(boottime.tv_sec)) {
+    return std::chrono::seconds{0};
+  }
+  return std::chrono::seconds{static_cast<std::int64_t>(now - boottime.tv_sec)};
+#else
   std::ifstream in{"/proc/uptime"};
   double up = 0.0;
   double idleDummy = 0.0;
@@ -226,4 +256,5 @@ std::optional<std::chrono::seconds> systemUptime() {
     return std::chrono::seconds{static_cast<std::int64_t>(up)};
   }
   return std::nullopt;
+#endif
 }

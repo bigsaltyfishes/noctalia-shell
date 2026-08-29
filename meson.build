@@ -34,7 +34,13 @@ sanitize = get_option('b_sanitize') != 'none'
 # clampOrdered). The cost is a few precondition branches (not the heavy _GLIBCXX_DEBUG).
 if get_option('buildtype') != 'release'
   if is_libcxx
-    add_project_arguments('-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE', language: 'cpp')
+    # Meson itself injects -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_FAST
+    # for debug builds; the -U cancels that first definition so the stronger
+    # mode below applies without a macro-redefinition warning on every TU.
+    add_project_arguments(
+      '-U_LIBCPP_HARDENING_MODE', '-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE',
+      language: 'cpp',
+    )
   else
     add_project_arguments('-D_GLIBCXX_ASSERTIONS', language: 'cpp')
   endif
@@ -94,13 +100,38 @@ libqalculate_dep    = dependency('libqalculate')
 libxml2_dep         = dependency('libxml-2.0')
 md4c_dep            = dependency('md4c')
 nlohmann_dep        = dependency('nlohmann_json')
-tomlplusplus_dep    = dependency('tomlplusplus')
+# FreeBSD's shared libtomlplusplus carries parse_error typeinfo that does not
+# unify across DSOs under libc++, so `catch (const toml::parse_error&)` misses
+# and the process aborts (catching via std::exception still works but loses the
+# source-position payload). Use the header-only implementation there instead of
+# linking the shipped library.
+if host_machine.system() != 'linux'
+  _toml_includedir = run_command('pkg-config', '--variable=includedir', 'tomlplusplus', check: true
+  ).stdout().strip()
+  tomlplusplus_dep    = declare_dependency(
+    include_directories: include_directories(_toml_includedir, is_system: true),
+    compile_args: ['-DTOML_HEADER_ONLY=1'],
+  )
+else
+  tomlplusplus_dep    = dependency('tomlplusplus')
+endif
 libical_dep         = dependency('libical')
 pam_dep             = cc.find_library('pam')
 dl_dep              = cpp.find_library('dl', required: false)
+threads_dep         = dependency('threads')
+
+# FreeBSD-specific support libraries:
+#  - epoll-shim: epoll/eventfd over kqueue (no base-system equivalents)
+#  - libutil: kinfo_getfile for fd diagnostics
+bsd_deps = []
+if host_machine.system() == 'freebsd'
+  bsd_deps += [dependency('epoll-shim'), cpp.find_library('util')]
+endif
 
 jemalloc_option = get_option('jemalloc')
-is_glibc = cpp.get_define('__GLIBC__', prefix: '#include <features.h>') != ''
+# <features.h> is glibc-specific; only probe it on Linux so other platforms
+# (e.g. FreeBSD) don't fail the configure step.
+is_glibc = host_machine.system() == 'linux' and cpp.get_define('__GLIBC__', prefix: '#include <features.h>') != ''
 jemalloc_deps = []
 jemalloc_cpp_args = []
 
@@ -187,13 +218,10 @@ mcu_dep = declare_dependency(
   include_directories: include_directories('third_party/material_color_utilities', is_system: true),
 )
 
-# ── System: stb_image_resize2 and stb_image_write (header-only) ─────────────────────────────────
-if not cc.has_header('stb/stb_image_resize2.h')
-  error('stb/stb_image_resize2.h not found')
-endif
-if not cc.has_header('stb/stb_image_write.h')
-  error('stb/stb_image_write.h not found')
-endif
+# ── Vendored: stb_image_resize2 and stb_image_write (header-only) ──────────────────────────────
+# Single-header libraries vendored under third_party/stb so no system package
+# (or hand-patched system include dir) is needed.
+stb_inc_dep = declare_dependency(include_directories: include_directories('third_party/stb', is_system: true))
 
 # ── System: libwebp (WebP decode and thumbnail encode) ───────────────────────
 libwebp_dep = dependency('libwebp', required: true)
@@ -399,7 +427,7 @@ _wlr_ls_h = custom_target('wlr-layer-shell-unstable-v1-client-header',
   output:  'wlr-layer-shell-unstable-v1-client-protocol.h',
   command: [
     'sh', '-c',
-    '"$1" client-header "$2" "$3" && sed -i s/namespace/name_space/g "$3"',
+    '"$1" client-header "$2" "$3" && sed -i.sedtmp s/namespace/name_space/g "$3"',
     '_', wayland_scanner.full_path(), '@INPUT@', '@OUTPUT@',
   ],
 )
@@ -453,6 +481,7 @@ _noctalia_sources = files(
   'src/core/deferred_call.cpp',
   'src/core/process/process_fds.cpp',
   'src/core/files/file_watcher.cpp',
+  'src/core/files/self_path.cpp',
   'src/core/input/key_chord.cpp',
   'src/core/log.cpp',
   'src/core/process/process.cpp',
@@ -840,6 +869,7 @@ _noctalia_sources = files(
   'src/system/system_monitor_service.cpp',
   'src/system/weather_service.cpp',
   'src/time/time_format.cpp',
+  'src/time/tz_compat.cpp',
   'src/time/time_service.cpp',
   'src/ui/visuals/audio_visualizer.cpp',
   'src/ui/visuals/fancy_audio_visualizer.cpp',
@@ -1052,11 +1082,12 @@ _noctalia_system_dependencies = [
   libjxl_dep,
   libjxl_threads_dep,
   sndfile_dep,
-] + jemalloc_deps + (dl_dep.found() ? [dl_dep] : [])
+] + jemalloc_deps + (dl_dep.found() ? [dl_dep] : []) + bsd_deps + [threads_dep]
 
 _noctalia_dependencies = _noctalia_system_dependencies + [
   fzy_dep,
   mcu_dep,
+  stb_inc_dep,
   luau_dep,
 ]
 
@@ -1210,6 +1241,18 @@ if build_tests
     'wallpaper_shuffle_state',
     'workspace_alert_service',
   ]
+
+  # /proc-backed readers are Linux-only; the sysctl/getfsstat branches used
+  # elsewhere don't honor their fixtures, so these tests are skipped there.
+  if host_machine.system() != 'linux'
+    _filtered = []
+    foreach _test_name : _cpp_test_names
+      if _test_name != 'cpu_stat' and _test_name != 'disk_mounts'
+        _filtered += [_test_name]
+      endif
+    endforeach
+    _cpp_test_names = _filtered
+  endif
 
   foreach test_name : _cpp_test_names
     test_exe = executable(test_name + '_test',
